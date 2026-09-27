@@ -99,7 +99,11 @@ void GribOutput::estimate(const param::MIRParametrisation& param, api::MIREstima
                           context::Context& ctx) const {
 
     const data::MIRField& field = ctx.field();
-    ASSERT(field.dimensions() == 1);
+    ASSERT(field.dimensions() > 0);
+
+    // The estimate below is per-message metadata (representation, accuracy, packing) which is
+    // identical for every dimension, so it is valid for a multi-dimension field too -- e.g.
+    // several ensemble members transformed together. Previously this asserted dimensions()==1.
 
     field.representation()->estimate(estimator);
 
@@ -464,7 +468,12 @@ size_t GribOutput::set(const param::MIRParametrisation& param, context::Context&
     std::unique_ptr<grib::Packing> pack(grib::Packing::build(param));
     ASSERT(pack);
 
-    ASSERT(field.dimensions() == 1);
+    // NOTE: this used to assert field.dimensions() == 1, but the loop below is already written
+    // for N dimensions exactly as GribOutput::save() is -- it indexes the source handle via
+    // field.handle(i) and the values via field.values(i). The assertion was a vestigial guard,
+    // not a real constraint, and it rejected legitimate multi-dimension fields (e.g. several
+    // ensemble members transformed together) on the set() path, which is the one taken when the
+    // target grid matches the source grid (grid=O1280).
 
     for (size_t i = 0; i < field.dimensions(); i++) {
 

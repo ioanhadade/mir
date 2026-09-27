@@ -113,7 +113,11 @@ void BitmapFilter::execute(context::Context& ctx) const {
 
 void BitmapFilter::estimate(context::Context& ctx, api::MIREstimation& estimation) const {
     const data::MIRField& field = ctx.field();
-    ASSERT(field.dimensions() == 1);
+    ASSERT(field.dimensions() > 0);
+
+    // The estimate below is per-message metadata (representation, accuracy, packing) which is
+    // identical for every dimension, so it is valid for a multi-dimension field too -- e.g.
+    // several ensemble members transformed together. Previously this asserted dimensions()==1.
 
     const util::Bitmap b(path_);
 
