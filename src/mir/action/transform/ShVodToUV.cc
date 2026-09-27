@@ -68,32 +68,25 @@ void ShVodToUV::execute(context::Context& ctx) const {
     // get field properties
     data::MIRField& field = ctx.field();
     ASSERT(sizeof(std::complex<double>) == 2 * sizeof(double));
-    ASSERT(field.dimensions() == 2);
+
+    // The field holds one (vo,d) pair per input field: [vo0,d0,vo1,d1,...]. With a single input
+    // that is the classic 2-dimension case; with several fields transformed together (e.g. batched
+    // ensemble members) there are 2F dimensions and every pair must be converted.
+    ASSERT(field.dimensions() % 2 == 0);
+    ASSERT(field.dimensions() > 0);
+    const size_t F = field.dimensions() / 2;
 
     size_t truncation = field.representation()->truncation();
     size_t size       = repres::sh::SphericalHarmonics::number_of_complex_coefficients(truncation) * 2;
     ASSERT(truncation);
     ASSERT(size);
 
+    // configure paramIds for U/V
+    long id_u = 0;
+    long id_v = 0;
+    util::Wind::paramIds(parametrisation_, id_u, id_v);
 
-    // get vo/d, allocate U/V
-    const MIRValuesVector& field_vo = field.values(0);
-    const MIRValuesVector& field_d  = field.values(1);
-
-    Log::debug() << "ShVodToUV truncation=" << truncation << ", size=" << size << ", values=" << field_vo.size()
-                 << std::endl;
-
-    if (field_vo.size() != field_d.size()) {
-        Log::error() << "ShVodToUV: input fields have different truncation: " << field_vo.size() << "/"
-                     << field_d.size() << std::endl;
-        ASSERT(field_vo.size() == field_d.size());
-    }
-
-    MIRValuesVector result_U(size, 0.);
-    MIRValuesVector result_V(size, 0.);
-
-
-    // transform
+    // transform (the transform object is reused across all pairs)
     const int T         = int(truncation);
     const int nb_coeff  = int(size);
     const int nb_fields = 1;
@@ -101,20 +94,33 @@ void ShVodToUV::execute(context::Context& ctx) const {
     atlas::trans::VorDivToUV vordiv_to_UV(T, options_);
     ASSERT(vordiv_to_UV.truncation() == T);
 
-    vordiv_to_UV.execute(nb_coeff, nb_fields, field_vo.data(), field_d.data(), result_U.data(), result_V.data());
+    for (size_t f = 0; f < F; ++f) {
+        const size_t iu = 2 * f;
+        const size_t iv = 2 * f + 1;
 
+        const MIRValuesVector& field_vo = field.values(iu);
+        const MIRValuesVector& field_d  = field.values(iv);
 
-    // configure paramIds for U/V
-    long id_u = 0;
-    long id_v = 0;
-    util::Wind::paramIds(parametrisation_, id_u, id_v);
+        Log::debug() << "ShVodToUV truncation=" << truncation << ", size=" << size
+                     << ", values=" << field_vo.size() << " (pair " << (f + 1) << "/" << F << ")" << std::endl;
 
+        if (field_vo.size() != field_d.size()) {
+            Log::error() << "ShVodToUV: input fields have different truncation: " << field_vo.size() << "/"
+                         << field_d.size() << std::endl;
+            ASSERT(field_vo.size() == field_d.size());
+        }
 
-    field.update(result_U, 0);
-    field.metadata(0, "paramId", id_u);
+        MIRValuesVector result_U(size, 0.);
+        MIRValuesVector result_V(size, 0.);
 
-    field.update(result_V, 1);
-    field.metadata(1, "paramId", id_v);
+        vordiv_to_UV.execute(nb_coeff, nb_fields, field_vo.data(), field_d.data(), result_U.data(), result_V.data());
+
+        field.update(result_U, iu);
+        field.metadata(iu, "paramId", id_u);
+
+        field.update(result_V, iv);
+        field.metadata(iv, "paramId", id_v);
+    }
 }
 
 const char* ShVodToUV::name() const {

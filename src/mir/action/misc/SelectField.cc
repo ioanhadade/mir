@@ -23,8 +23,16 @@
 namespace mir::action {
 
 
-SelectField::SelectField(const param::MIRParametrisation& parametrisation) : Action(parametrisation) {
+SelectField::SelectField(const param::MIRParametrisation& parametrisation) : Action(parametrisation), stride_(0) {
     ASSERT(parametrisation_.get("which", which_));
+
+    // Optional: keep every stride-th dimension starting at `which`, rather than just that one.
+    // Needed when several fields were transformed together (e.g. batched ensemble members), where
+    // a vod2uv field holds [u0,v0,u1,v1,...] and "u only" must keep 0,2,4,... not just 0.
+    long stride = 0;
+    if (parametrisation_.get("stride", stride) && stride > 0) {
+        stride_ = size_t(stride);
+    }
 }
 
 
@@ -33,18 +41,27 @@ SelectField::~SelectField() = default;
 
 bool SelectField::sameAs(const Action& other) const {
     const auto* o = dynamic_cast<const SelectField*>(&other);
-    return (o != nullptr) && (which_ == o->which_);
+    return (o != nullptr) && (which_ == o->which_) && (stride_ == o->stride_);
 }
 
 
 void SelectField::print(std::ostream& out) const {
-    out << "SelectField[" << which_ << "]";
+    out << "SelectField[" << which_;
+    if (stride_ > 0) {
+        out << ",stride=" << stride_;
+    }
+    out << "]";
 }
 
 
 void SelectField::execute(context::Context& ctx) const {
     data::MIRField& field = ctx.field();
-    field.select(which_);
+    if (stride_ > 0) {
+        field.select(which_, stride_);
+    }
+    else {
+        field.select(which_);
+    }
 }
 
 

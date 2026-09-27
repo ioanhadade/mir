@@ -74,6 +74,7 @@ private:
     // -- Members
 
     size_t which_;
+    size_t stride_;
 
     // -- Methods
     // None

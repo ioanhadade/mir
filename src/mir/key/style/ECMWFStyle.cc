@@ -373,14 +373,17 @@ void ECMWFStyle::epilogue(action::ActionPlan& plan) const {
         bool u_only = option(user, "u-only", false);
         bool v_only = option(user, "v-only", false);
 
+        // stride 2: the field holds [u0,v0,u1,v1,...] -- one (u,v) pair per input field. With a
+        // single input this keeps exactly one dimension, as before; with several fields
+        // transformed together it correctly keeps every u (or every v).
         if (u_only) {
             ASSERT(!v_only);
-            plan.add("select.field", "which", 0L);
+            plan.add("select.field", "which", 0L, "stride", 2L);
         }
 
         if (v_only) {
             ASSERT(!u_only);
-            plan.add("select.field", "which", 1L);
+            plan.add("select.field", "which", 1L, "stride", 2L);
         }
     }
 

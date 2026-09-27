@@ -67,6 +67,7 @@ public:
     void add(const std::string& name, const std::string&, long);
     void add(const std::string& name, const std::string&, const std::string&);
     void add(const std::string& name, const std::string&, const std::string&, const std::string&, long);
+    void add(const std::string& name, const std::string&, long, const std::string&, long);
     void add(const std::string& name, const std::string&, const std::string&, const std::string&, const std::string&);
 
     void add(Action*);

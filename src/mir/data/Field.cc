@@ -115,6 +115,36 @@ void Field::select(size_t which) {
 }
 
 
+void Field::select(size_t which, size_t stride) {
+    eckit::AutoLock<const eckit::Counted> lock(this);
+    ASSERT(stride > 0);
+    ASSERT(which < values_.size());
+
+    metadata_.resize(values_.size());
+
+    std::vector<MIRValuesVector> values;
+    std::vector<std::map<std::string, long> > metadata;
+    std::map<size_t, size_t> handles;
+
+    // Each kept dimension must carry its ORIGINAL source handle across, otherwise the output
+    // would take its GRIB metadata from the wrong field. handle(i) defaults to i when unset.
+    size_t j = 0;
+    for (size_t i = which; i < values_.size(); i += stride, ++j) {
+        values.emplace_back(std::move(values_[i]));
+        metadata.emplace_back(std::move(metadata_[i]));
+
+        auto hit    = handles_.find(i);
+        handles[j]  = hit != handles_.end() ? hit->second : i;
+    }
+
+    ASSERT(!values.empty());
+
+    values_.swap(values);
+    metadata_.swap(metadata);
+    handles_.swap(handles);
+}
+
+
 Field::~Field() {
     if (representation_ != nullptr) {
         representation_->detach();

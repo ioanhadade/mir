@@ -65,6 +65,10 @@ public:
     /// Resize to one, and keep only which
     void select(size_t which);
 
+    /// Keep dimensions which, which+stride, which+2*stride, ... discarding the rest.
+    /// With a field of exactly `stride` dimensions this is equivalent to select(which).
+    void select(size_t which, size_t stride);
+
     void representation(const repres::Representation*);
     const repres::Representation* representation() const;
 

@@ -85,6 +85,18 @@ void MIRField::select(size_t which) {
 }
 
 
+void MIRField::select(size_t which, size_t stride) {
+    util::lock_guard<util::recursive_mutex> lock(mutex_);
+
+    // MUST copy-on-write: the underlying Field is reference counted and is shared between the
+    // per-branch Contexts that ActionGraph::execute clones for sibling actions. Without this, two
+    // sibling SelectFields (u-only and v-only under the same AreaCropper) mutate the SAME Field --
+    // the first reduces it, the second then sees too few dimensions.
+    copyOnWrite();
+    field_->select(which, stride);
+}
+
+
 MIRField::~MIRField() {
     util::lock_guard<util::recursive_mutex> lock(mutex_);
 
@@ -116,6 +128,11 @@ void MIRField::validate() const {
 void MIRField::handle(size_t which, size_t handle) {
     util::lock_guard<util::recursive_mutex> lock(mutex_);
 
+    // Like every other mutator here: the underlying Field is reference counted and may be shared
+    // with another Context (ActionGraph::execute clones a Context per sibling branch), so it must
+    // not be modified in place. Without this, setting a handle would silently rewrite a sibling
+    // branch's dimension->GRIB-handle mapping and give its output the wrong metadata.
+    copyOnWrite();
     field_->handle(which, handle);
 }
 
@@ -140,6 +157,13 @@ void MIRField::representation(const repres::Representation* representation) {
 
     copyOnWrite();
     field_->representation(representation);
+}
+
+
+bool MIRField::unique() const {
+    util::lock_guard<util::recursive_mutex> lock(mutex_);
+
+    return field_->count() == 1;
 }
 
 

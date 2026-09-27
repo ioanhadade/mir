@@ -80,6 +80,18 @@ void ActionPlan::add(const std::string& name, const std::string& param, const st
 }
 
 
+void ActionPlan::add(const std::string& name, const std::string& param1, long value1,
+                     const std::string& param2, long value2) {
+    ASSERT(!ended());
+
+    auto* runtime = new param::RuntimeParametrisation(parametrisation_);
+    runtimes_.push_back(runtime);
+    runtime->set(param1, value1);
+    runtime->set(param2, value2);
+    push_back(ActionFactory::build(name, *runtime));
+}
+
+
 void ActionPlan::add(const std::string& name, const std::string& param1, const std::string& value1,
                      const std::string& param2, long value2) {
     ASSERT(!ended());

@@ -68,6 +68,7 @@ public:
 
     /// Resize to one, and keep only which
     void select(size_t which);
+    void select(size_t which, size_t stride);
 
     void representation(const repres::Representation*);
     const repres::Representation* representation() const;
@@ -77,6 +78,11 @@ public:
 
     const MIRValuesVector& values(size_t which) const;
     MIRValuesVector& direct(size_t which);  // Non-const version for direct update (Filter)
+
+    /// True when this handle is the sole owner of the underlying Field, so mutating it will NOT
+    /// make copyOnWrite() clone every dimension. Lets a caller release source values in place
+    /// instead of paying for a full clone of the field.
+    bool unique() const;
 
     void metadata(size_t which, const std::map<std::string, long>&);
     void metadata(size_t which, const std::string& name, long value);
