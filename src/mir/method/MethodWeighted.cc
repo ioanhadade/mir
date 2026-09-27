@@ -396,6 +396,14 @@ void MethodWeighted::setVectorFromOperandMatrix(const DenseMatrix& A, MIRValuesV
     DenseMatrix Awrap(const_cast<double*>(Avector.data()), Avector.size(), 1);
 
     space.unlinearise(A, Awrap, missingValue);
+
+    // SpaceLinear::unlinearise does not copy: it repoints Awrap at A's storage. That is only
+    // equivalent to writing Avector when A already views Avector (the per-field path). The
+    // batched path passes a column of a separate result matrix, so copy it across explicitly;
+    // otherwise Avector keeps its zero initialisation and the output field is all zeros.
+    if (Awrap.data() != Avector.data()) {
+        std::copy(Awrap.data(), Awrap.data() + Avector.size(), Avector.begin());
+    }
 }
 
 
