@@ -47,6 +47,10 @@ public:
     virtual void solve(const DenseMatrix& A, const WeightMatrix& W, DenseMatrix& B,
                        const double& missingValue) const = 0;
 
+    /// Whether solve() accepts operands with more than one column, i.e. several fields applied
+    /// against the same matrix in a single call. Defaults to false: a solver has to opt in.
+    virtual bool supportsMultipleColumns() const { return false; }
+
     virtual bool sameAs(const Solver&) const = 0;
     virtual void hash(eckit::MD5&) const     = 0;
     virtual void json(eckit::JSON&) const    = 0;

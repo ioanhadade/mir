@@ -458,6 +458,133 @@ void MethodWeighted::execute(context::Context& ctx, const repres::Representation
                                         });
 
 
+    // ------------------------------------------------------------------------------------------
+    // Batched path: apply W to ALL fields in one go.
+    //
+    // The cost of a sparse apply is dominated by streaming the weight matrix W, which is
+    // independent of how many right-hand sides it is applied to. Doing one field at a time
+    // re-streams W for every field -- with several fields in the MIRField (e.g. ensemble members
+    // merged into one requirement) that is F times more traffic than necessary.
+    //
+    // `Multiply::solve` already dispatches to eckit's spmm when the operand has more than one
+    // column, and eckit's Matrix is column-major, so packing field f into column f is exactly the
+    // layout mkl_dcsrmm wants (matdescra "G__F", ldb = npts_inp, ldc = npts_out).
+    //
+    // Only taken when:
+    //   - more than one field is present;
+    //   - no non-linear treatment modifies W (matrixCopy) -- that needs a per-field matrix;
+    //   - the space maps one value to one column (dimensions() == 1), so column f IS field f;
+    //   - statistics are not being collected (a debug path that reports per field);
+    //   - the solver accepts multi-column operands. solver::Statistics does NOT -- it asserts
+    //     A.cols() == 1 -- and mirCheckStats above is an unrelated debug resource, so it cannot
+    //     stand in for this test.
+    // Anything else falls through to the original per-field loop below.
+    {
+        std::string space;
+        parametrisation_.get("vector-space", space);
+        const data::Space& sp = data::SpaceChooser::lookup(space);
+
+        const size_t F = field.dimensions();
+
+        if (F > 1 && !matrixCopy && sp.dimensions() == 1 && !check_stats &&
+            solver_->supportsMultipleColumns()) {
+
+            // Cap how much the packed operands may allocate. A (npts_inp x n) and B (npts_out x n)
+            // are dense and ADDITIONAL to the field's own values -- unlike the per-field path
+            // below, which wraps field.values(i) in place and copies nothing. An unbounded n is
+            // therefore an OOM: measured on pgen-31393364, one 16-field 6.48M-point call wanted
+            // 1,582 MB on top of a ~2 GB working set and the rank was killed. Note F can be twice
+            // the merged member count -- wind carries vo,d (later u,v) per member.
+            //
+            // So process the columns in tiles that fit a budget. W is still streamed once per
+            // tile instead of once per field, which is where the saving comes from; a tile of 1
+            // is harmless, as Multiply::solve dispatches back to spmv for a single column.
+            static const size_t budgetMB = eckit::Resource<size_t>(
+                "mirInterpolationBatchBudgetMB;$MIR_INTERPOLATION_BATCH_BUDGET_MB", 256);
+
+            // Releasing each source column as soon as it has been packed makes A cost nothing
+            // NET: the field's storage for that dimension disappears exactly as A's column
+            // appears, and field.update() installs the result in its place afterwards. That is
+            // only safe when this handle owns the Field outright, because MIRField::direct()
+            // calls copyOnWrite(), which on a SHARED field clones ALL F dimensions -- far more
+            // than the release saves. When shared, fall back to leaving the sources alone.
+            const bool release = field.unique();
+
+            // Budget on what actually stays resident per column: npts_out when sources are
+            // released, npts_inp + npts_out when they are not. For a downscaling interpolation
+            // (e.g. 6.6M -> 1.6M) that is ~5x more columns per byte of budget.
+            const size_t perColumn = (release ? npts_out : npts_inp + npts_out) * sizeof(double);
+            size_t tile = perColumn > 0 ? (budgetMB * 1024 * 1024) / perColumn : F;
+            tile = std::max<size_t>(1, std::min(tile, F));
+
+            std::ostringstream os;
+            os << "Interpolating " << F << " fields (" << Log::Pretty(npts_inp) << " -> "
+               << Log::Pretty(npts_out) << "), tile " << tile << (release ? ", released" : "");
+            trace::Timer trace(os.str());
+
+            for (size_t base = 0; base < F; base += tile) {
+                const size_t n = std::min(tile, F - base);
+
+                // Pack the linearised inputs, one column per field. linearise() is applied per
+                // field so that spaces which transform values (e.g. logarithmic) behave exactly
+                // as they do in the per-field path.
+                DenseMatrix A(npts_inp, n);
+                for (size_t i = 0; i < n; ++i) {
+                    ASSERT(field.values(base + i).size() == npts_inp);
+
+                    {
+                        // Scoped: for SpaceLinear, linearise() hands back a VIEW onto
+                        // field.values(base + i), so both wrappers must die before it is released.
+                        // FIXME: remove const_cast once Matrix provides read-only view
+                        DenseMatrix in(const_cast<double*>(field.values(base + i).data()), npts_inp, 1);
+                        DenseMatrix lin;
+                        sp.linearise(in, lin, missingValue);
+                        ASSERT(lin.rows() == npts_inp && lin.cols() == 1);
+
+                        std::copy(lin.data(), lin.data() + npts_inp, A.data() + i * npts_inp);
+                    }
+
+                    if (release) {
+                        // NOTE: clear() would keep the capacity -- MIRValuesVector is a
+                        // std::vector<double>. Swapping with an empty one actually frees it.
+                        MIRValuesVector().swap(field.direct(base + i));
+                    }
+                }
+
+                DenseMatrix B(npts_out, n);
+                B.setZero();
+
+                {
+                    auto timing(ctx.statistics().matrixTimer());
+                    solver_->solve(A, W, B, missingValue);
+                }
+
+                // Release the packed inputs before allocating the result vectors below, so the
+                // two do not have to be resident at the same time.
+                {
+                    DenseMatrix spent;
+                    A.swap(spent);
+                }
+
+                for (size_t i = 0; i < n; ++i) {
+                    MIRValuesVector result(npts_out);
+
+                    // column i of B is contiguous (column-major), so it can be viewed in place
+                    DenseMatrix out(B.data() + i * npts_out, npts_out, 1);
+                    setVectorFromOperandMatrix(out, result, missingValue, sp);
+
+                    for (auto& r : forceMissing) {
+                        result[r] = missingValue;
+                    }
+
+                    field.update(result, base + i, hasMissing || !forceMissing.empty());
+                }
+            }
+
+            return;
+        }
+    }
+
     for (size_t i = 0; i < field.dimensions(); i++) {
 
         std::ostringstream os;

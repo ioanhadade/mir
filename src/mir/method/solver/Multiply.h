@@ -29,6 +29,8 @@ struct Multiply : Solver {
 
     void solve(const DenseMatrix& A, const WeightMatrix& W, DenseMatrix& B, const double& missingValue) const override;
 
+    bool supportsMultipleColumns() const override { return true; }
+
 private:
     bool sameAs(const Solver&) const override;
     void print(std::ostream&) const override;
